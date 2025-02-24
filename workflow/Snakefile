@@ -20,7 +20,6 @@ import re
 import sys
 
 import pandas as pd
-from snakemake.remote.HTTP import RemoteProvider as HTTPRemoteProvider
 from snakemake.workflow import Workflow
 
 # Get full path based on Snakemake location
@@ -33,7 +32,7 @@ data_config_files = glob.glob(f"{DATA_PATH}/*.csv")
 # data_config_files = glob.glob(f"{DATA_PATH}/test.csv")
 
 # Only operate on EM-seq files (ignore BS-seq)
-EMSEQ_ONLY = False
+EMSEQ_ONLY = True
 
 # Store a big table of all our experiment .csvs
 all_experiments_df = pd.DataFrame()
@@ -168,22 +167,14 @@ rule all:
 # This is: GRCh38, with decoys and hs38d1, but no ALT and no patch. For a better understanding, read:
 # https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/GRCh38_major_release_seqs_for_alignment_pipelines/README_analysis_sets.txt
 
-HTTPS = HTTPRemoteProvider()
-
-
 rule get_reference_genome:
     input:
-        # Not really ftp -- it's HTTPS/TLS
-        reference_genome=ancient(
-            HTTPS.remote(
-                "ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/GRCh38_major_release_seqs_for_alignment_pipelines/GCA_000001405.15_GRCh38_no_alt_plus_hs38d1_analysis_set.fna.gz",
-                keep_local=True,
-            )
-        ),
+        # Use the full HTTPS URL; note that the URL now explicitly starts with "https://"
+        reference_genome="https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/GRCh38_major_release_seqs_for_alignment_pipelines/GCA_000001405.15_GRCh38_no_alt_plus_hs38d1_analysis_set.fna.gz"
     output:
-        reference_genome="{DATA_PATH}/reference/GRCh38.fna",
-    run:
-        shell("gunzip -c {input.reference_genome} > {output.reference_genome}")
+        reference_genome="{DATA_PATH}/reference/GRCh38.fna"
+    shell:
+        "gunzip -c {input.reference_genome} > {output.reference_genome}"
 
 
 # Apply both the NCBI U2AF1 fix and the Encode DAC Exclusion List
@@ -194,19 +185,10 @@ rule mask_reference_fasta:
     conda:
         "envs/env.yaml"
     input:
-        u1af1_exclusion=ancient(
-            HTTPS.remote(
-                "ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/GRCh38_major_release_seqs_for_alignment_pipelines/GCA_000001405.15_GRCh38_GRC_exclusions.bed",
-                keep_local=True,
-            )
-        ),
-        dac_exclusion=ancient(
-            HTTPS.remote(
-                "encode-public.s3.amazonaws.com/2020/05/05/bc5dcc02-eafb-4471-aba0-4ebc7ee8c3e6/ENCFF356LFX.bed.gz",
-                keep_local=True,
-            )
-        ),
-        reference_genome=ancient(rules.get_reference_genome.output.reference_genome),  # Ancient ignores the mtime: if this file exists, assume we ran.
+        # Directly specify the remote URLs (with HTTPS)
+        u1af1_exclusion="https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/GRCh38_major_release_seqs_for_alignment_pipelines/GCA_000001405.15_GRCh38_GRC_exclusions.bed",
+        dac_exclusion="https://encode-public.s3.amazonaws.com/2020/05/05/bc5dcc02-eafb-4471-aba0-4ebc7ee8c3e6/ENCFF356LFX.bed.gz",
+        reference_genome=rules.get_reference_genome.output.reference_genome,
     output:
         masked_reference_genome="{DATA_PATH}/reference/GRCh38-DAC-U2AF1.fna",
     log:
