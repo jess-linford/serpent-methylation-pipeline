@@ -168,40 +168,45 @@ rule all:
 # https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/GRCh38_major_release_seqs_for_alignment_pipelines/README_analysis_sets.txt
 
 rule get_reference_genome:
-    input:
-        # Use the full HTTPS URL; note that the URL now explicitly starts with "https://"
-        reference_genome="https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/GRCh38_major_release_seqs_for_alignment_pipelines/GCA_000001405.15_GRCh38_no_alt_plus_hs38d1_analysis_set.fna.gz"
     output:
         reference_genome="{DATA_PATH}/reference/GRCh38.fna"
+    params:
+        url="https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/GRCh38_major_release_seqs_for_alignment_pipelines/GCA_000001405.15_GRCh38_no_alt_plus_hs38d1_analysis_set.fna.gz"
     shell:
-        "gunzip -c {input.reference_genome} > {output.reference_genome}"
+        """
+        wget -O {output.reference_genome}.gz {params.url} &&
+        gunzip -c {output.reference_genome}.gz > {output.reference_genome} &&
+        rm {output.reference_genome}.gz
+        """
+
 
 
 # Apply both the NCBI U2AF1 fix and the Encode DAC Exclusion List
 # U2AF1 masking file details: https://genomeref.blogspot.com/2021/07/one-of-these-things-doest-belong.html
 # Encode DAC Exclusion List details: https://www.encodeproject.org/annotations/ENCSR636HFF/
 rule mask_reference_fasta:
-    # TODO: Consider a more modular env definition? (one per rule / rule group?)
-    conda:
-        "envs/env.yaml"
     input:
-        # Directly specify the remote URLs (with HTTPS)
-        u1af1_exclusion="https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/GRCh38_major_release_seqs_for_alignment_pipelines/GCA_000001405.15_GRCh38_GRC_exclusions.bed",
-        dac_exclusion="https://encode-public.s3.amazonaws.com/2020/05/05/bc5dcc02-eafb-4471-aba0-4ebc7ee8c3e6/ENCFF356LFX.bed.gz",
-        reference_genome=rules.get_reference_genome.output.reference_genome,
+        reference_genome=rules.get_reference_genome.output.reference_genome
+    params:
+        # URLs for the exclusion files:
+        u1af1_url="https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/GRCh38_major_release_seqs_for_alignment_pipelines/GCA_000001405.15_GRCh38_GRC_exclusions.bed",
+        dac_url="https://encode-public.s3.amazonaws.com/2020/05/05/bc5dcc02-eafb-4471-aba0-4ebc7ee8c3e6/ENCFF356LFX.bed.gz"
     output:
-        masked_reference_genome="{DATA_PATH}/reference/GRCh38-DAC-U2AF1.fna",
+        masked_reference_genome="{DATA_PATH}/reference/GRCh38-DAC-U2AF1.fna"
     log:
-        maskfasta="{DATA_PATH}/reference/maskfasta.log.txt",
+        maskfasta="{DATA_PATH}/reference/maskfasta.log.txt"
     shell:
         """
-        gunzip -c {input.dac_exclusion} > {DATA_PATH}/reference/DAC-Exclusion-List-ENCFF356LFX.bed
-        cp {input.u1af1_exclusion} {DATA_PATH}/reference/U2AF1-GRCh38-Exclusion.bed
-        # maskfasta doesn't work on stdin/stdout, or with gzipped files :/
-        # Mask for DAC
-        bedtools maskfasta -fi {input.reference_genome} -fo {DATA_PATH}/reference/GRCh38-DAC.fna -bed {DATA_PATH}/reference/DAC-Exclusion-List-ENCFF356LFX.bed >>{log.maskfasta} 2>&1
-        # Mask for U2AF1
-        bedtools maskfasta -fi {DATA_PATH}/reference/GRCh38-DAC.fna -fo {output.masked_reference_genome} -bed {DATA_PATH}/reference/U2AF1-GRCh38-Exclusion.bed >>{log.maskfasta} 2>&1
+        # Download and prepare DAC exclusion file:
+        wget -O {DATA_PATH}/reference/ENCFF356LFX.bed.gz {params.dac_url} &&
+        gunzip -c {DATA_PATH}/reference/ENCFF356LFX.bed.gz > {DATA_PATH}/reference/DAC-Exclusion-List-ENCFF356LFX.bed &&
+        rm {DATA_PATH}/reference/ENCFF356LFX.bed.gz &&
+        # Download U2AF1 exclusion file:
+        wget -O {DATA_PATH}/reference/U2AF1-GRCh38-Exclusion.bed {params.u1af1_url} &&
+        # Mask for DAC:
+        bedtools maskfasta -fi {input.reference_genome} -fo {DATA_PATH}/reference/GRCh38-DAC.fna -bed {DATA_PATH}/reference/DAC-Exclusion-List-ENCFF356LFX.bed >> {log.maskfasta} 2>&1 &&
+        # Mask for U2AF1:
+        bedtools maskfasta -fi {DATA_PATH}/reference/GRCh38-DAC.fna -fo {output.masked_reference_genome} -bed {DATA_PATH}/reference/U2AF1-GRCh38-Exclusion.bed >> {log.maskfasta} 2>&1
         """
 
 
@@ -213,8 +218,6 @@ rule mask_reference_fasta:
 # Runs once to generate biscuit indices
 # NOTE: Not referenced currently, as we aren't calling SNVs w/ biscuit
 rule biscuit_index:
-    conda:
-        "envs/env.yaml"
     input:
         masked_reference_genome=ancient(
             rules.mask_reference_fasta.output.masked_reference_genome
@@ -236,8 +239,6 @@ rule biscuit_index:
 ### biscuit QC index
 # Runs once for the post-alignent QC tools (parsed by multiqc)
 rule biscuit_qc_index:
-    conda:
-        "envs/env.yaml"  # TODO: Add perl for this? (bleh)
     input:
         biscuit_index=ancient(rules.biscuit_index.output),
         masked_reference_genome=ancient(
@@ -260,8 +261,6 @@ rule biscuit_qc_index:
 
 ### bwameth index (using bwa-mem2)
 rule bwa_meth_index:
-    conda:
-        "envs/env.yaml"
     input:
         masked_reference_genome = ancient(rules.mask_reference_fasta.output.masked_reference_genome)
     output:
@@ -281,7 +280,6 @@ rule bwa_meth_index:
 # Build wgbs_tools, requires libboost
 # Bit of a hackjob to build this here...
 rule wgbs_build:
-    conda: "envs/env.yaml"
     input:
         # git_submodule_init = ancient(rules.git_submodule_init.output)
     output:
@@ -293,7 +291,6 @@ rule wgbs_build:
 
 # wgbs_tools index
 rule wgbs_tools_index:
-    conda: "envs/env.yaml"
     input:
         wgbs_build = rules.wgbs_build.output,
         reference = rules.mask_reference_fasta.output.masked_reference_genome
@@ -353,8 +350,6 @@ rule md5sum:
 # This rule only executes if you do NOT set the subsampled flag -- it generates parallel experiment
 # directories consisting of subsampled reads to perform rapid analyses.
 rule seqtk_subsample:
-    conda:
-        "envs/env.yaml"
     input:
         md5_sums=ancient(rules.md5sum.output.validated),
         r1_file=rules.md5sum.input.r1_file,
@@ -391,8 +386,6 @@ rule seqtk_subsample:
 rule fastp:
     group:
         "align_core"
-    conda:
-        "envs/env.yaml"
     input:
         md5_sums=ancient(rules.md5sum.output.validated),
         r1_file=rules.md5sum.input.r1_file,
@@ -448,8 +441,6 @@ rule fastp:
 rule bwa_meth:
     group:
         "align_core"
-    conda:
-        "envs/env.yaml"
     input:
         input_fasta = "{DATA_PATH}/{experiment}/{sample}/fastp/interleaved.fa",
         reference_genome = rules.mask_reference_fasta.output.masked_reference_genome,
@@ -479,8 +470,6 @@ rule bwa_meth:
 #rule biscuit:
 #    group:
 #        "align_core"
-#-2    conda:
-#        "envs/env.yaml"
 #    input:
 #        input_fasta="{DATA_PATH}/{experiment}/{sample}/fastp/interleaved.fa",
 #        reference_genome=rules.mask_reference_fasta.output.masked_reference_genome,
@@ -508,8 +497,6 @@ rule bwa_meth:
 rule mark_nonconverted:
     group:
         "align_core"
-    conda:
-        "envs/env.yaml"
     input:
         aligned_sam="{DATA_PATH}/{experiment}/{sample}/samtools/raw.sam",
         reference_genome=rules.mask_reference_fasta.output.masked_reference_genome,
@@ -533,8 +520,6 @@ rule mark_nonconverted:
 rule samtools_fixmate_sort_markdup:
     group:
         "align_core"
-    conda:
-        "envs/env.yaml"
     input:
         mark_nonconv=rules.mark_nonconverted.output,
     output:
@@ -573,8 +558,6 @@ rule samtools_fixmate_sort_markdup:
 
 ### samtools index
 rule samtools_index:
-    conda:
-        "envs/env.yaml"
     input:
         rules.samtools_fixmate_sort_markdup.output.bam,
     output:
@@ -588,8 +571,6 @@ rule samtools_index:
 
 ### samtools statistics
 rule samtools_statistics:
-    conda:
-        "envs/env.yaml"
     input:
         bam=rules.samtools_fixmate_sort_markdup.output.bam,
         # Note: we can operate on the .csi index above, but I worry there's a race where
@@ -616,8 +597,6 @@ rule samtools_statistics:
 # We make this one long pipe, since the .vcf is enormous (~10GB/alignment), and we don't need to keep it around.
 # NOTE: mergecg expects a sorted .bed -- I'm pretty sure the sort here is unnecessary, but it's cheap enough.
 rule biscuit_bed:
-    conda:
-        "envs/env.yaml"
     input:
         bam=rules.samtools_fixmate_sort_markdup.output.bam,
         masked_reference_genome=ancient(
@@ -658,8 +637,6 @@ rule biscuit_bed:
 # TODO: Investigate pairwise mode?
 # NOTE: Temporarily disabled
 rule biscuit_epiread:
-    conda:
-        "envs/env.yaml"
     input:
         bam=rules.samtools_fixmate_sort_markdup.output.bam,
         masked_reference_genome=ancient(
@@ -686,8 +663,6 @@ rule biscuit_epiread:
 ### biscuit QC script
 # Usage: QC.sh [-h,--help] [-s,--single-end] [-v,--vcf] [-o,--outdir] [-k,--keep-tmp-files] [-n,--no-cov-qc] assets_directory genome sample_name in_bam
 rule biscuit_qc:
-    conda:
-        "envs/env.yaml"
     input:
         bam=rules.samtools_fixmate_sort_markdup.output.bam,
         masked_reference_genome=ancient(
@@ -709,8 +684,6 @@ rule biscuit_qc:
 
 ### MethylDackel mbias
 rule methyldackel_mbias_plots:
-    conda:
-        "envs/env.yaml"
     input:
         bam=rules.samtools_fixmate_sort_markdup.output.bam,
         reference=rules.mask_reference_fasta.output.masked_reference_genome,
@@ -730,8 +703,6 @@ rule methyldackel_mbias_plots:
 
 ### FastQC stats
 rule fastqc_bam:
-    conda:
-        "envs/env.yaml"
     input:
         rules.samtools_fixmate_sort_markdup.output.bam,
     output:
@@ -750,8 +721,6 @@ rule fastqc_bam:
 
 ### goleft indexcov
 rule goleft_indexcov:
-    conda:
-        "envs/env.yaml"
     input:
         bam=rules.samtools_fixmate_sort_markdup.output.bam,
         index=rules.samtools_index.output,
@@ -768,8 +737,6 @@ rule goleft_indexcov:
 
 ### wgbs_tools pat/beta file formats
 rule wgbs_tools_pat_beta:
-    conda:
-        "envs/env.yaml"
     input:
         bam=rules.samtools_fixmate_sort_markdup.output.bam,
         # index=rules.wgbs_tools_index.output, # Temporarily assume pre-built index.
@@ -792,8 +759,6 @@ rule wgbs_tools_pat_beta:
 ### Run Aggregator
 # Note: This pan-dependency ensures all other jobs are run.
 rule touch_complete_flag:
-    conda:
-        "envs/env.yaml"
     input:
         # rules.biscuit_epiread.output,
         rules.biscuit_bed.output,
@@ -817,8 +782,6 @@ rule touch_complete_flag:
 ### multiqc
 # Across an entire experiment/project, not per-sample or batch
 rule multiqc:
-    conda:
-        "envs/env.yaml"
     input:
         rules.all.input.multiqc,
     output:
