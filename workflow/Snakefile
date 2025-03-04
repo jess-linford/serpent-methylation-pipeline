@@ -240,7 +240,6 @@ rule biscuit_index:
 # Runs once for the post-alignent QC tools (parsed by multiqc)
 rule biscuit_qc_index:
     input:
-        biscuit_index=ancient(rules.biscuit_index.output),
         masked_reference_genome=ancient(
             rules.mask_reference_fasta.output.masked_reference_genome
         ),
@@ -248,16 +247,21 @@ rule biscuit_qc_index:
         "{DATA_PATH}/reference/biscuit_qc/cpg.bed.gz",
         "{DATA_PATH}/reference/biscuit_qc/windows100bp.gc_content.bot10p.bed.gz",
         "{DATA_PATH}/reference/biscuit_qc/windows100bp.gc_content.top10p.bed.gz",
-        path="{DATA_PATH}/reference/biscuit_qc/",
+        path=directory("{DATA_PATH}/reference/biscuit_qc/"),
     log:
         "{DATA_PATH}/reference/biscuit_qc/biscuit_qc.log.txt",
     params:
         out_dir="{DATA_PATH}/reference/biscuit_qc/",
     shell:
         """
-        mkdir {params.out_dir}
-        build_biscuit_QC_assets.pl --verbose --ref {input.masked_reference_genome} --outdir {params.out_dir} >{log} 2>&1
+        mkdir -p {params.out_dir}
+        build_biscuit_QC_assets.pl \
+            --verbose \
+            --ref {input.masked_reference_genome} \
+            --outdir {params.out_dir} \
+            > {log} 2>&1
         """
+
 
 ### bwameth index (using bwa-mem2)
 rule bwa_meth_index:
@@ -276,41 +280,41 @@ rule bwa_meth_index:
         "bwameth.py index-mem2 {input.masked_reference_genome} >{log.index} 2>&1"
 
 
-### wgbs_tools
-# Build wgbs_tools, requires libboost
-# Bit of a hackjob to build this here...
-rule wgbs_build:
-    input:
-        # git_submodule_init = ancient(rules.git_submodule_init.output)
-    output:
-        "wgbs_tools/src/python/wgbs_tools.py"
-    log:
-        "wgbs_tools/snakemake_build.log.txt"
-    shell:
-        "cd wgbs_tools && python setup.py >{log} 2>&1"
+# ### wgbs_tools
+# # Build wgbs_tools, requires libboost
+# # Bit of a hackjob to build this here...
+# rule wgbs_build:
+#     input:
+#         # git_submodule_init = ancient(rules.git_submodule_init.output)
+#     output:
+#         "wgbs_tools/src/python/wgbs_tools.py"
+#     log:
+#         "wgbs_tools/snakemake_build.log.txt"
+#     shell:
+#         "cd wgbs_tools && python setup.py >{log} 2>&1"
 
-# wgbs_tools index
-rule wgbs_tools_index:
-    input:
-        wgbs_build = rules.wgbs_build.output,
-        reference = rules.mask_reference_fasta.output.masked_reference_genome
-    output:
-        "{DATA_PATH}/reference/wgbs_tools/GRCh38-DAC-U2AF1/chrome.size",
-        "{DATA_PATH}/reference/wgbs_tools/GRCh38-DAC-U2AF1/CpG.bed.gz",
-        "{DATA_PATH}/reference/wgbs_tools/GRCh38-DAC-U2AF1/CpG.bed.gz.csi",
-        "{DATA_PATH}/reference/wgbs_tools/GRCh38-DAC-U2AF1/CpG.chrome.size",
-        "{DATA_PATH}/reference/wgbs_tools/GRCh38-DAC-U2AF1/rev.CpG.bed.gz.tbi"
-    log:
-        "{DATA_PATH}/reference/wgbs_tools/snakemake_init_genome.log.txt"
-    shell:
-        # NOTE: The -f force in init_genome seems to be required for wgbs_tools to build in a symlinked directory,
-        # otherwise it seems to think the index already exists (when it doesn't).
-        # NOTE: Consider just run the ln -s if path exists, otherwise this gets re-build on other nodes if there are multiple running nodes
-        # and a shared resource directory?
-        """
-        ln -s ../{DATA_PATH}/reference/wgbs_tools/ ./wgbs_tools/references
-        ./wgbs_tools/wgbstools init_genome GRCh38-DAC-U2AF1 --fasta_path {input.reference} -f >{log} 2>&1
-        """
+# # wgbs_tools index
+# rule wgbs_tools_index:
+#     input:
+#         wgbs_build = rules.wgbs_build.output,
+#         reference = rules.mask_reference_fasta.output.masked_reference_genome
+#     output:
+#         "{DATA_PATH}/reference/wgbs_tools/GRCh38-DAC-U2AF1/chrome.size",
+#         "{DATA_PATH}/reference/wgbs_tools/GRCh38-DAC-U2AF1/CpG.bed.gz",
+#         "{DATA_PATH}/reference/wgbs_tools/GRCh38-DAC-U2AF1/CpG.bed.gz.csi",
+#         "{DATA_PATH}/reference/wgbs_tools/GRCh38-DAC-U2AF1/CpG.chrome.size",
+#         "{DATA_PATH}/reference/wgbs_tools/GRCh38-DAC-U2AF1/rev.CpG.bed.gz.tbi"
+#     log:
+#         "{DATA_PATH}/reference/wgbs_tools/snakemake_init_genome.log.txt"
+#     shell:
+#         # NOTE: The -f force in init_genome seems to be required for wgbs_tools to build in a symlinked directory,
+#         # otherwise it seems to think the index already exists (when it doesn't).
+#         # NOTE: Consider just run the ln -s if path exists, otherwise this gets re-build on other nodes if there are multiple running nodes
+#         # and a shared resource directory?
+#         """
+#         ln -s ../{DATA_PATH}/reference/wgbs_tools/ ./wgbs_tools/references
+#         ./wgbs_tools/wgbstools init_genome GRCh38-DAC-U2AF1 --fasta_path {input.reference} -f >{log} 2>&1
+#         """
 
 ###############
 ### Core Pipeline Steps
@@ -735,24 +739,24 @@ rule goleft_indexcov:
         "goleft indexcov --directory {params.out_dir} {input.bam} >{log} 2>&1"
 
 
-### wgbs_tools pat/beta file formats
-rule wgbs_tools_pat_beta:
-    input:
-        bam=rules.samtools_fixmate_sort_markdup.output.bam,
-        # index=rules.wgbs_tools_index.output, # Temporarily assume pre-built index.
-    output:
-        "{DATA_PATH}/{experiment}/{sample}/wgbs_tools/{sample}.beta",
-        "{DATA_PATH}/{experiment}/{sample}/wgbs_tools/{sample}.pat.gz",
-        "{DATA_PATH}/{experiment}/{sample}/wgbs_tools/{sample}.pat.gz.csi",
-        "{DATA_PATH}/{experiment}/{sample}/wgbs_tools/{sample}.mbias/{sample}.mbias.OB.txt",
-        "{DATA_PATH}/{experiment}/{sample}/wgbs_tools/{sample}.mbias/{sample}.mbias.OT.txt"
-    log:
-        "{DATA_PATH}/{experiment}/{sample}/logs/wgbs_tools-bam2pat.log.txt"
-    params:
-        out_dir="{DATA_PATH}/{experiment}/{sample}/wgbs_tools/"
-    threads: 8
-    shell:
-        "wgbstools bam2pat --genome GRCh38-DAC-U2AF1 --out_dir {params.out_dir} --mbias --verbose --threads {threads} {input.bam} >{log} 2>&1"
+# ### wgbs_tools pat/beta file formats
+# rule wgbs_tools_pat_beta:
+#     input:
+#         bam=rules.samtools_fixmate_sort_markdup.output.bam,
+#         # index=rules.wgbs_tools_index.output, # Temporarily assume pre-built index.
+#     output:
+#         "{DATA_PATH}/{experiment}/{sample}/wgbs_tools/{sample}.beta",
+#         "{DATA_PATH}/{experiment}/{sample}/wgbs_tools/{sample}.pat.gz",
+#         "{DATA_PATH}/{experiment}/{sample}/wgbs_tools/{sample}.pat.gz.csi",
+#         "{DATA_PATH}/{experiment}/{sample}/wgbs_tools/{sample}.mbias/{sample}.mbias.OB.txt",
+#         "{DATA_PATH}/{experiment}/{sample}/wgbs_tools/{sample}.mbias/{sample}.mbias.OT.txt"
+#     log:
+#         "{DATA_PATH}/{experiment}/{sample}/logs/wgbs_tools-bam2pat.log.txt"
+#     params:
+#         out_dir="{DATA_PATH}/{experiment}/{sample}/wgbs_tools/"
+#     threads: 8
+#     shell:
+#         "wgbstools bam2pat --genome GRCh38-DAC-U2AF1 --out_dir {params.out_dir} --mbias --verbose --threads {threads} {input.bam} >{log} 2>&1"
 
 
 
@@ -767,7 +771,7 @@ rule touch_complete_flag:
         rules.fastqc_bam.output,
         rules.methyldackel_mbias_plots.output,
         rules.goleft_indexcov.output,
-        rules.wgbs_tools_pat_beta.output,
+        # rules.wgbs_tools_pat_beta.output,
     output:
         "{DATA_PATH}/{experiment}/{sample}/.pipeline-complete-v2",
     params:
