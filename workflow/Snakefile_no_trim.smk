@@ -768,7 +768,6 @@ rule touch_complete_flag:
     shell:
         """
         touch {params.out_flag}
-        curl -H "Priority: low" -d "$HOSTNAME: {params.out_flag}" ntfy.sh/semenko-snakemake
         """
 
 
