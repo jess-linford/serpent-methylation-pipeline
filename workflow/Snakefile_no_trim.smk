@@ -415,14 +415,10 @@ rule fastp:
     params:
         # Note: --overrepresentation_analysis was overwhelming with our huge sequencing data, disabled for now.
         minimum_length=15,
-        # TruSeq adapters (we could autodetect, but I prefer being explicit)   
-        adapter_r1="AGATCGGAAGAGCACACGTCTGAACTCCAGTCA",
-        adapter_r2="AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT",
     shell:
         """
         fastp --in1 {input.r1_file} --in2 {input.r2_file} \
         --length_required {params.minimum_length} \
-        --adapter_sequence "{params.adapter_r1}" --adapter_sequence_r2 "{params.adapter_r2}" \
         --json "{output.fastp_json}" --html "{output.fastp_html}" \
         --thread {threads} --verbose --failed_out {output.fastp_failed} --stdout \
         2>{log.fastp_err} >{output.fastp_pipe_output}

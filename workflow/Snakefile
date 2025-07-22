@@ -424,16 +424,12 @@ rule fastp:
         trim_r2_5prime=lambda wildcards: "15" if "_bsseq" in wildcards.sample else "10",
         trim_r2_3prime="10",
         minimum_length=15,
-        # TruSeq adapters (we could autodetect, but I prefer being explicit)   
-        adapter_r1="AGATCGGAAGAGCACACGTCTGAACTCCAGTCA",
-        adapter_r2="AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT",
     shell:
         """
         fastp --in1 {input.r1_file} --in2 {input.r2_file} \
         --trim_front1 {params.trim_r1_5prime} --trim_tail1 {params.trim_r1_3prime} \
         --trim_front2 {params.trim_r2_5prime} --trim_tail2 {params.trim_r2_3prime} \
         --length_required {params.minimum_length} \
-        --adapter_sequence "{params.adapter_r1}" --adapter_sequence_r2 "{params.adapter_r2}" \
         --json "{output.fastp_json}" --html "{output.fastp_html}" \
         --thread {threads} --verbose --failed_out {output.fastp_failed} --stdout \
         2>{log.fastp_err} >{output.fastp_pipe_output}
