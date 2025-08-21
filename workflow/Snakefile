@@ -245,21 +245,37 @@ rule biscuit_qc_index:
         ),
     output:
         "{DATA_PATH}/reference/biscuit_qc/cpg.bed.gz",
+        "{DATA_PATH}/reference/biscuit_qc/cpg.bed.gz.tbi",
         "{DATA_PATH}/reference/biscuit_qc/windows100bp.gc_content.bot10p.bed.gz",
+        "{DATA_PATH}/reference/biscuit_qc/windows100bp.gc_content.bot10p.bed.gz.tbi",
         "{DATA_PATH}/reference/biscuit_qc/windows100bp.gc_content.top10p.bed.gz",
+        "{DATA_PATH}/reference/biscuit_qc/windows100bp.gc_content.top10p.bed.gz.tbi",
         path=directory("{DATA_PATH}/reference/biscuit_qc/"),
     log:
         "{DATA_PATH}/reference/biscuit_qc/biscuit_qc.log.txt",
     params:
         out_dir="{DATA_PATH}/reference/biscuit_qc/",
     shell:
-        """
+        r"""
+        set -euo pipefail
         mkdir -p {params.out_dir}
+
         build_biscuit_QC_assets.pl \
             --verbose \
             --ref {input.masked_reference_genome} \
             --outdir {params.out_dir} \
-            > {log} 2>&1
+            >> {log} 2>&1
+
+        # Ensure bgzip + sorted + tabix for all three assets
+        for base in cpg.bed windows100bp.gc_content.bot10p.bed windows100bp.gc_content.top10p.bed; do
+            src="{params.out_dir}/${{base}}.gz"
+            # re-sort deterministically, bgzip, then tabix
+            gunzip -c "$src" \
+            | LC_ALL=C sort -k1,1 -k2,2n \
+            | bgzip -c > "$src.tmp.gz"
+            mv "$src.tmp.gz" "$src"
+            tabix -f -p bed "$src"
+        done
         """
 
 
@@ -424,12 +440,16 @@ rule fastp:
         trim_r2_5prime=lambda wildcards: "15" if "_bsseq" in wildcards.sample else "10",
         trim_r2_3prime="10",
         minimum_length=15,
+        # TruSeq adapters (we could autodetect, but I prefer being explicit)   
+        # adapter_r1="AGATCGGAAGAGCACACGTCTGAACTCCAGTCA",
+        # adapter_r2="AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT",
     shell:
         """
         fastp --in1 {input.r1_file} --in2 {input.r2_file} \
         --trim_front1 {params.trim_r1_5prime} --trim_tail1 {params.trim_r1_3prime} \
         --trim_front2 {params.trim_r2_5prime} --trim_tail2 {params.trim_r2_3prime} \
         --length_required {params.minimum_length} \
+        # --adapter_sequence "{params.adapter_r1}" --adapter_sequence_r2 "{params.adapter_r2}" \
         --json "{output.fastp_json}" --html "{output.fastp_html}" \
         --thread {threads} --verbose --failed_out {output.fastp_failed} --stdout \
         2>{log.fastp_err} >{output.fastp_pipe_output}
@@ -457,7 +477,7 @@ rule bwa_meth:
     # On some cluster executions (e.g., LSF/RIS), we need to limit the number of threads a bit, becuase at runtime,
     # if the execution group exceeds the allocation, it's killed. Here, we limit to N-8.
     # The 8 comes from the rest of the thread group: 3 for fastp, 1 for mark nonconverted, 3 for fixmate/sort/markdup
-    threads: lambda x: len(os.sched_getaffinity(0))-8  # All cores but 8
+    threads: lambda x: min(len(os.sched_getaffinity(0)) - 8, 40)  # All cores but 8
     resources:
        mem_mb = 72000
     shell:
@@ -795,15 +815,3 @@ rule multiqc:
 
 
 ruleorder: md5sum > seqtk_subsample
-
-# nfty.sh push for the whole job
-onsuccess:
-    shell(
-        'curl -H "Title: Success" -H "Tags: tada" -d "Job complete on $HOSTNAME" ntfy.sh/semenko-snakemake'
-    )
-
-
-onerror:
-    shell(
-        'curl -H "Title: Failure" -H "Tags: warning" -d "Job failure on $HOSTNAME" ntfy.sh/semenko-snakemake'
-    )
